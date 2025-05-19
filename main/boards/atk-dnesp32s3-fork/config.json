@@ -1,0 +1,9 @@
+{
+    "target": "esp32s3",  // 目标芯片型号: esp32, esp32s3, esp32c3等
+    "builds": [
+        {
+            "name": "atk-dnesp32s3-fork",  // 开发板名称
+            "sdkconfig_append": []
+        }
+    ]
+}
