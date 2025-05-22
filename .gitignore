@@ -5,6 +5,7 @@ build/
 build.clang/
 .vscode/
 .devcontainer/
+sdkconfig
 sdkconfig.old
 dependencies.lock
 .env
