@@ -2,10 +2,20 @@
 
 #include "display.h"
 #include "application.h"
+#include "esp_err.h"
+#include "esp_event.h"
+#include "esp_event_base.h"
+#include "esp_wifi.h"
+#include "esp_wifi_default.h"
 #include "system_info.h"
 #include "font_awesome_symbols.h"
 #include "settings.h"
 #include "assets/lang_config.h"
+
+#include <cstring>
+#include <string>
+#include <wifi_provisioning/manager.h>
+#include <wifi_provisioning/scheme_ble.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -36,32 +46,78 @@ std::string WifiBoard::GetBoardType() {
     return "wifi";
 }
 
+static void provisioning_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+  static std::string _ssid, _password;
+  if (event_base == WIFI_PROV_EVENT) {
+    switch (event_id) {
+      case WIFI_PROV_START:
+        ESP_LOGI(TAG, "Provisioning started");
+        break;
+      case WIFI_PROV_CRED_RECV: {
+                                  wifi_sta_config_t *wifi_sta_cfg = (wifi_sta_config_t *)event_data;
+                                  auto ssid = (const char *) wifi_sta_cfg->ssid;
+                                  auto password = (const char *) wifi_sta_cfg->password;
+                                  ESP_LOGI(TAG, "Received Wi-Fi credentials"
+                                      "\n\tSSID     : %s\n\tPassword : %s",
+                                      ssid, password);
+                                  _ssid = ssid;
+                                  _password = password;
+                                  break;
+                                }
+      case WIFI_PROV_CRED_FAIL: {
+                                  wifi_prov_sta_fail_reason_t *reason = (wifi_prov_sta_fail_reason_t *)event_data;
+                                  ESP_LOGE(TAG, "Provisioning failed!\n\tReason : %s"
+                                      "\n\tPlease reset to factory and retry provisioning",
+                                      (*reason == WIFI_PROV_STA_AUTH_ERROR) ?
+                                      "Wi-Fi station authentication failed" : "Wi-Fi access-point not found");
+                                  wifi_prov_mgr_reset_sm_state_on_failure();
+                                  break;
+                                }
+      case WIFI_PROV_CRED_SUCCESS: {
+
+                                     ESP_LOGI(TAG, "Provisioning successful");
+                                     auto &manager = SsidManager::GetInstance();
+                                     manager.AddSsid(_ssid, _password);
+                                     break;
+                                   }
+      default:
+                                   break;
+    }
+  }
+}
+
 void WifiBoard::EnterWifiConfigMode() {
     auto& application = Application::GetInstance();
     application.SetDeviceState(kDeviceStateWifiConfiguring);
 
-    auto& wifi_ap = WifiConfigurationAp::GetInstance();
-    wifi_ap.SetLanguage(Lang::CODE);
-    wifi_ap.SetSsidPrefix("Xiaozhi");
-    wifi_ap.Start();
+    ESP_ERROR_CHECK(esp_netif_init());
+    esp_netif_create_default_wifi_sta();
 
-    // 显示 WiFi 配置 AP 的 SSID 和 Web 服务器 URL
-    std::string hint = Lang::Strings::CONNECT_TO_HOTSPOT;
-    hint += wifi_ap.GetSsid();
-    hint += Lang::Strings::ACCESS_VIA_BROWSER;
-    hint += wifi_ap.GetWebServerUrl();
-    hint += "\n\n";
-    
-    // 播报配置 WiFi 的提示
-    application.Alert(Lang::Strings::WIFI_CONFIG_MODE, hint.c_str(), "", Lang::Sounds::P3_WIFICONFIG);
-    
-    // Wait forever until reset after configuration
-    while (true) {
-        int free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        int min_free_sram = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
-        ESP_LOGI(TAG, "Free internal: %u minimal internal: %u", free_sram, min_free_sram);
-        vTaskDelay(pdMS_TO_TICKS(10000));
-    }
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    wifi_prov_mgr_config_t config = {
+      .scheme = wifi_prov_scheme_ble,
+      .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM,
+    };
+
+    ESP_ERROR_CHECK( wifi_prov_mgr_init(config) );
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &provisioning_event_handler, NULL));
+    const char *service_name = "my_device";
+    const char *service_key  = "password";
+
+    wifi_prov_security_t security = WIFI_PROV_SECURITY_0;
+    const char *pop = "abcd1234";
+
+    ESP_ERROR_CHECK( wifi_prov_mgr_start_provisioning(security, pop, service_name, service_key) );
+
+    application.Alert(Lang::Strings::WIFI_CONFIG_MODE, "Open APP", "", Lang::Sounds::P3_WIFICONFIG);
+
+    // Wait for service to complete
+    wifi_prov_mgr_wait();
+    // Finally de-initialize the manager
+    wifi_prov_mgr_deinit();
 }
 
 void WifiBoard::StartNetwork() {
