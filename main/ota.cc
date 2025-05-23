@@ -39,6 +39,7 @@ Ota::Ota() {
             has_serial_number_ = false;
         } else {
             serial_number_ = std::string(reinterpret_cast<char*>(serial_number), 32);
+            ESP_LOGI(TAG, "Serial number: %s", serial_number_.c_str()); 
             has_serial_number_ = true;
         }
     }

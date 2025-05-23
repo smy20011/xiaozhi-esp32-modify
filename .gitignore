@@ -13,3 +13,6 @@ releases/
 main/assets/lang_config.h
 .DS_Store
 .cache
+.nvim.lua
+.direnv/
+

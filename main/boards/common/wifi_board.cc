@@ -87,6 +87,54 @@ static void provisioning_event_handler(void* arg, esp_event_base_t event_base, i
   }
 }
 
+/* Handler for the optional provisioning endpoint registered by the application.
+ * The data format can be chosen by applications. Here, we are using plain ascii text.
+ * Applications can choose to use other formats like protobuf, JSON, XML, etc.
+ * Note that memory for the response buffer must be allocated using heap as this buffer
+ * gets freed by the protocomm layer once it has been sent by the transport layer.
+ */
+esp_err_t board_json_handler(uint32_t session_id, const uint8_t *inbuf, ssize_t inlen, uint8_t **outbuf, ssize_t *outlen, void *priv_data)
+{
+    ESP_LOGE(TAG, "Received board json request");
+    if (!priv_data) {
+        return ESP_FAIL;
+    }
+
+    WifiBoard *board = (WifiBoard*) priv_data;
+    std::string boardJson = board->GetJson();
+    ESP_LOGE(TAG, "board json data: %s", boardJson.c_str());
+    *outbuf = (uint8_t *)strdup("1234");
+    if (*outbuf == NULL) {
+        ESP_LOGE(TAG, "System out of memory");
+        return ESP_ERR_NO_MEM;
+    }
+    *outlen = sizeof("1234") + 1; /* +1 for NULL terminating byte */
+    return ESP_OK;
+}
+
+esp_err_t echo_req_handler (uint32_t session_id,
+                            const uint8_t *inbuf, ssize_t inlen,
+                            uint8_t **outbuf, ssize_t *outlen,
+                            void *priv_data)
+{
+    /* Session ID may be used for persistence. */
+    ESP_LOGE(TAG, "Session ID : %lu", session_id);
+
+    /* Echo back the received data. */
+    *outlen = inlen;            /* Output the data length updated. */
+    *outbuf = (uint8_t *)malloc(inlen);    /* This is to be deallocated outside. */
+    memcpy(*outbuf, inbuf, inlen);
+
+    auto wifi_board = (WifiBoard*) priv_data;
+    if (priv_data == NULL) {
+      ESP_LOGE(TAG, "No Custom Data");
+      return ESP_ERR_INVALID_ARG;
+    }
+    ESP_LOGE(TAG, "Json: %s", wifi_board->GetJson().c_str());
+    return ESP_OK;
+}
+
+
 void WifiBoard::EnterWifiConfigMode() {
     auto& application = Application::GetInstance();
     application.SetDeviceState(kDeviceStateWifiConfiguring);
@@ -110,8 +158,9 @@ void WifiBoard::EnterWifiConfigMode() {
     wifi_prov_security_t security = WIFI_PROV_SECURITY_0;
     const char *pop = "abcd1234";
 
+    ESP_ERROR_CHECK( wifi_prov_mgr_endpoint_create("boardjson") );
     ESP_ERROR_CHECK( wifi_prov_mgr_start_provisioning(security, pop, service_name, service_key) );
-
+    wifi_prov_mgr_endpoint_register("boardjson", echo_req_handler, this);
     application.Alert(Lang::Strings::WIFI_CONFIG_MODE, "Open APP", "", Lang::Sounds::P3_WIFICONFIG);
 
     // Wait for service to complete

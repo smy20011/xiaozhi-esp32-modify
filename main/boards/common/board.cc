@@ -155,5 +155,6 @@ std::string Board::GetJson() {
 
     // Close the JSON object
     json += "}";
+    ESP_LOGI(TAG, "Request json: %s", json.c_str());
     return json;
 }
